@@ -1,46 +1,53 @@
-import {OptionalObjectValidationSpec, Validate, ValidationOptionsSym, ValidationSpec} from "./index";
-import {IsOfType, obj, Return} from "fp-way-core";
+import {Validate, ValidationOptionsSym, ValidationSpec} from "./index";
+import {IsOfType, JSTypesWithArrayAndNull, num, Return, TypeOf} from "fp-way-core";
+import Gt = num.Gt;
 
-type CatParent = {
-    age: number;
+type CatChild = {
+    age?: number;
     name?: string;
-    amountOfLegs: number;
-    childCat: Cat;
+    weight?: number;
 }
 type Cat = {
     age: number;
     name?: string;
-    amountOfLegs: number;
+    weight: number;
     child?: CatChild
 }
-type CatChild = Partial<Omit<Cat, 'child'>>
+type CatParent = {
+    age?: number;
+    name: string;
+    weight: number;
+    childCat: Cat;
+}
 
 describe('Validate', () => {
-    const CatChildSpec: OptionalObjectValidationSpec<CatChild> = {
+    const TypeErrorFactory = (t: JSTypesWithArrayAndNull) => (v, k) => `${k} must be of type ${t} but was of type ${TypeOf(v)}`
+    const CatChildSpec: ValidationSpec<CatChild> = {
         age: [
-            [IsOfType('number'), Return('age must be a number')]
+            [IsOfType('number'), TypeErrorFactory('number')],
+            [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
         ],
         name: [
-            [IsOfType('string'),  Return('name must be a number')]
+            [IsOfType('string'),  TypeErrorFactory('string')]
         ],
-        amountOfLegs: [
-            [IsOfType('number'),  Return('amountOfLegs must be a number')]
+        weight: [
+            [IsOfType('number'),  TypeErrorFactory('number')]
         ],
         [ValidationOptionsSym]: {
-            optionalProps: ['name', 'age', 'amountOfLegs'],
-            isOptional: true
+            optionalProps: ['name', 'age', 'weight'],
+            isOptional: true,
         }
     }
 
     const CatSpec: ValidationSpec<Cat> = {
         age: [
-            [IsOfType('number'), Return('age must be a number')]
+            [IsOfType('number'), TypeErrorFactory('number')],
         ],
         name: [
-            [IsOfType('string'),  Return('name must be a number')]
+            [IsOfType('string'),  TypeErrorFactory('string')]
         ],
-        amountOfLegs: [
-            [IsOfType('number'),  Return('amountOfLegs must be a number')]
+        weight: [
+            [IsOfType('number'),  TypeErrorFactory('number')]
         ],
         child: CatChildSpec,
         [ValidationOptionsSym]: {
@@ -50,42 +57,40 @@ describe('Validate', () => {
 
     const CatParentSpec: ValidationSpec<CatParent> = {
         age: [
-            [IsOfType('number'), Return('age must be a number')]
+            [IsOfType('number'), TypeErrorFactory('number')],
         ],
         name: [
-            [IsOfType('string'),  Return('name must be a number')]
+            [IsOfType('string'),  TypeErrorFactory('string')]
         ],
-        amountOfLegs: [
-            [IsOfType('number'),  Return('amountOfLegs must be a number')]
+        weight: [
+            [IsOfType('number'),  TypeErrorFactory('number')]
         ],
         childCat: CatSpec,
         [ValidationOptionsSym]: {
-            optionalProps: ['name']
+            optionalProps: ['age']
         }
     }
 
     it('should return valid summary if an object is valid', () => {
-        const cat: Cat = {
+        const catChild: CatChild = {
             age: 1,
             name: 'Tonny',
-            amountOfLegs: 4,
-            child: {}
+            weight: 4,
         }
 
-        const result = Validate(CatSpec, cat);
+        const result = Validate(CatChildSpec, catChild);
 
         expect(result.valid).toBe(true);
     })
     it('should return valid summary if an object is invalid', () => {
+        const catChild: CatChild = {
+            age: 'Tom',
+            name: 8,
+            weight: { number: 3 },
+            isTiger: false
+        } as any
 
-        const cat: Cat = {
-            age: '1' as any, // str instead of a number
-            name: 'Tonny',
-            amountOfLegs: 4,
-            child: [] as any // arr instead of an obj
-        }
-
-        const result = Validate(CatSpec, cat);
+        const result = Validate(CatChildSpec, catChild);
 
         expect(result.valid).toBe(false);
     })
@@ -94,14 +99,14 @@ describe('Validate', () => {
         const cat: Cat = {
             age: '1' as any, // str instead of a number
             name: 'Tonny',
-            amountOfLegs: 4,
+            weight: 4,
             child: [] as any // arr instead of an obj
         }
 
         const result = Validate(CatSpec, cat);
 
         expect(result.errors.name).toBeUndefined();
-        expect(result.errors.amountOfLegs).toBeUndefined();
+        expect(result.errors.weight).toBeUndefined();
 
         expect(result.errors.age).toBeDefined();
         expect(result.errors['child._self']).toBeDefined();
@@ -112,7 +117,7 @@ describe('Validate', () => {
         const cat: Cat = {
             age: 1,
             // name: 'Tonny',  <-- optional
-            amountOfLegs: 4,
+            weight: 4,
             child: {},
         }
 
@@ -124,7 +129,7 @@ describe('Validate', () => {
         const cat: Cat = {
             age: 1,
             name: 1 as any, // should be string
-            amountOfLegs: 4,
+            weight: 4,
             child: {},
         }
 
@@ -137,7 +142,7 @@ describe('Validate', () => {
         const cat: Cat = {
             age: 1,
             name: 'Tonny',
-            amountOfLegs: 4,
+            weight: 4,
             child: {},
             // @ts-expect-error
             redProp: 'what', // redundant
@@ -149,31 +154,33 @@ describe('Validate', () => {
     })
     it('should validate specs even if they are deeply nested', () => {
         const cat: Cat = {
-            age: 1,
-            name: 1 as any, // SHOULD BE A STRING
-            amountOfLegs: 4,
+            // age: 1, missing
+            color: 'grey',
+            name: 1,
+            weight: 4,
             child: {
                 name: 'Tonny jr',
-                age: '1' as any, // SHOULD BE A NUMBER
+                age: '1',
             },
-        }
+        } as any;
+
         const catParent: CatParent = {
-            age: 1,
+            age: 'old',
             name: 'Tonny Sr',
-            amountOfLegs: '4' as any, // SHOULD BE NUMBER
+            weight: 'overweight',
             childCat: cat
-        }
+        } as any
 
         const result = Validate(CatParentSpec, catParent);
 
-        expect(result.errorCount).toBe(3);
+        expect(result.errorCount).toBe(6);
         expect(result.valid).toBe(false);
     })
     it('should validate an object in less than 3ms', () => {
         const cat: Cat = {
             age: 1,
             name: 1 as any, // SHOULD BE A STRING
-            amountOfLegs: 4,
+            weight: 4,
             child: {
                 name: 'Tonny jr',
                 age: '1' as any, // SHOULD BE A NUMBER
@@ -182,7 +189,7 @@ describe('Validate', () => {
         const catParent: CatParent = {
             age: 1,
             name: 'Tonny Sr',
-            amountOfLegs: '4' as any, // SHOULD BE NUMBER
+            weight: '4' as any, // SHOULD BE NUMBER
             childCat: cat
         }
 

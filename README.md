@@ -1,5 +1,8 @@
 # Easyspec
-Object validation library that provides `Validate` method.
+Object validation library. 
+It provides `Validate` method that takes two arguments:
+1. ValidationSpec<T>
+2. Object of type T
 
 ## Validate
 A binary function that takes two arguments:
@@ -11,158 +14,350 @@ and returns `validation summary`
 
 Validation specification looks like this:
 ```ts
+export type ValidationSpec<T1 extends DataObject> = {
+    [P in keyof T1]?:
+        | ValidationSpec<Required<T1>[P]>               // spec for nested obj
+        | ValidationPropertyRule<T1, P>[]               // or an array of validationPropertyRules
+} & { [ValidationOptionsSym]?: ValidationOptions<T1> }; // optional options
+
+export type ValidationPropertyRule<T1, P extends keyof T1> = [ // tuple of:
+    (v: T1[P], k: keyof T1, o: T1) => boolean,                // 0.validator 
+    (v: T1[P], k: keyof T1, o: T1) => string                 // 1.message factory
+];
+```
+## Options 
+```ts
 export type ValidationOptions<T extends DataObject> = {
     // used to increase performance in case you are only interested in 
     // validity of an object and not in all the properties that are invalid
-    stopWhen?: (summary: ValidationSummary<T>) => boolean, 
-    
+    stopWhen?: (summary: ValidationSummary<T>) => boolean,
+
     // allows you to create custom messages in case validator throws an exception
     errorHandler?: (e: ValidationException) => string,
-    
+
     // should redundant properties make object invalid (true by default)
     redundantIsError?: boolean,
-    
-    // properties that are allowed to be null or undefined
+
+    // properties of an object that are allowed to be null or undefined
     optionalProps?: (keyof T)[],
-    
-    // whether object itself is allowed to be null or undefined
+
+    // whether object is allowed to be null or undefined
     isOptional?: boolean
 }
-export type ValidationPropertyRule<T1> = [
-    (v: any, o: T1) => boolean,                 // validator predicate function 
-    string | ((v: any, k: keyof T1) => string) // message in case validator returns false
-];
-export type ValidationSpec<T1 extends DataObject> =
-    & Record<keyof T1, ValidationPropertyRule<T1>[] | AnyValidationSpec>
-    & { [ValidationOptionsSym]?: ValidationOptions<T1> };
+
+// errorHandler option input value type looks like this:
+export type ValidationException = {
+    key: string,       // key that caused error
+    value: any,        // value that caused error
+    ruleIndex: number, // index of the rule where error occured
+    error: Error       // exception itself
+}
 ```
 
-<details>
-<summary>Click to view example:</summary>
+You don't have to provide any of the options, there's a default value for 
+every option. Default options look like this:
+```ts
+const defaultOptions = {
+    optionalProps: [],
+    redundantIsError: true,
+    stopWhen: FALSE,        // never stop
+    errorHandler: ({key}) => `Error while validating property "${key}".`,
+    isOptional: false
+}
+```
+
+## Validation summary
+The result of the `Validate` function is of type `ValidationSummary`
+```ts
+export type ValidationSummary<T1 extends DataObject> = {
+    valid: boolean,                                     // whether object is considered valid
+    errorCount: number,                                 // number of errors
+    missingProperties: string[],                        // missing properties
+    redundantProperties: string[],                      // redundant properties
+    errors: Record<keyof T1 | '_self', string[]>        // error messages that occured
+}
+```
+
+# Examples
+## Simple objects
+```ts
+type CatChild = {
+    age?: number;
+    name?: string;
+    weight?: number;
+}
+
+const CatChildSpec: ValidationSpec<CatChild> = {
+    age: [
+        [   // validator function takes these three parameters
+            // NOTE THE TYPES (they can be inferred)
+            (v: number, k: 'age', o: CatChild) => typeof v === 'number',
+            // message factory function same three parameters
+            (value, key, obj) => `${key} must be of type number but was of type ${typeof value}`
+        ],
+        [   
+            (value, key, obj) => value > 0,
+            (value, key, obj) => `${key} must be greater than 0 but was ${value}`
+        ],
+    ],
+    name: [
+        [
+            (value, key, obj) => typeof value === 'string',
+            (value, key, obj) => `${key} must be of type string but was of type ${typeof value}`
+        ],
+    ],
+    weight: [
+        [
+            (value, key, obj) => typeof value === 'number',
+            (value, key, obj) => `${key} must be of type number but was of type ${typeof value}`
+        ],
+    ],
+    // to specify options you need to import <ValidationOptionsSym> symbol 
+    [ValidationOptionsSym]: {
+        // according to the type above all properties should be optional
+        optionalProps: ['name', 'age', 'weight'], 
+    }
+}
+
+
+const validCatChild: CatChild = {
+    age: 1,
+    name: 'Tonny',
+    weight: 4,
+}
+
+const summary = Validate(CatChildSpec, validCatChild);
+```
+Result will be:
+```
+{
+    "valid": true,
+    "errorCount": 0,
+    "missingProperties": [],
+    "redundantProperties": [],
+    "errors": {}
+}
+```
+```ts
+
+const validCatChild: CatChild = {
+    age: 1,
+    name: 'Tonny',
+    // weight: 4,  # because every property is optional you can safely omit any of them
+}
+
+const summary = Validate(CatChildSpec, validCatChild); 
+```
+Result will be:
+```
+{
+    "valid": true,
+    "errorCount": 0,
+    "missingProperties": [],        # weight is not considered missing because it's optional
+    "redundantProperties": [],
+    "errors": {}
+}
+```
 
 ```ts
-type CatChild = Partial<Omit<Cat, 'child'>>
+const invalidCatChild: CatChild = {
+    age: 'Tom',
+    name: 8,
+    weight: { number: 3 },
+    isTiger: false
+}
+const summary2 = Validate(CatChildSpec, invalidCatChild);
+```
+Result will be:
+```
+{
+  "valid": false,                                   # object is invalid
+  "errorCount": 5,                                  # 5 errors were found
+  "missingProperties": [],
+  "redundantProperties": [ "isTiger" ],             # isTiger property is redundant
+  "errors": {                                       # "errors" is an object that contains 
+    "age": [                                        # an array of errors for every property:
+      "age must be a number",
+      "age must be greater than 0 but was Tom"
+    ],
+    "name": [
+      "name must be a number"
+    ],
+    "weight": [
+      "weight must be a number"
+    ]
+  }
+}
+```
+
+## Reducing amount of code
+To reduce the amount of code that you need to write to declare a spec 
+you can try using some helper function library such as: 
++ lodash
++ fp-way-core 
++ ramda
+
+For this example I am going to use `fp-way-core`.
+Let's declare the same spec as we did above, but now using the lib.
+
+```ts
+// create a helper for common functions
+const TypeErrorFactory = (t) => (v, k) => `${k} must be of type ${t} but was of type ${TypeOf(v)}`
+const CatChildSpec: ValidationSpec<CatChild> = {
+    age: [
+        [IsOfType('number'), TypeErrorFactory('number')],
+        [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
+    ],
+    name: [
+        [IsOfType('string'), TypeErrorFactory('string')],
+    ],
+    weight: [
+        [IsOfType('number'), TypeErrorFactory('number')],
+    ],
+    [ValidationOptionsSym]: {
+        optionalProps: ['name', 'age', 'weight'],
+    }
+}
+```
+
+## Nested objects and nested specs
+```ts
+type CatChild = {
+    age?: number;
+    name?: string;
+    weigth?: number;
+}
+
 type Cat = {
     age: number;
     name?: string;
-    amountOfLegs: number;
-    child: CatChild
+    weigth: number;
+    child: CatChild  // we are going to apply NESTED SPEC to validate this property
 }
 
 type CatParent = {
-    age: number;
-    name?: string;
-    amountOfLegs: number;
-    childCat: Cat;
+    age?: number;
+    name: string;
+    weigth: number;
+    childCat: Cat;  // we are going to apply NESTED SPEC to validate this property
 }
 
-const CatChildSpec: obj.ValidationSpec<CatChild> = {
+const CatChildSpec: ValidationSpec<CatChild> = {
     age: [
-        [IsOfType('number'), 'age must be a number']
+        [IsOfType('number'), TypeErrorFactory('number')],
+        [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
     ],
     name: [
-        [IsOfType('string'),  'name must be a number']
+        [IsOfType('string'),  TypeErrorFactory('string')]
     ],
-    amountOfLegs: [
-        [IsOfType('number'),  'amountOfLegs must be a number']
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
     ],
     [ValidationOptionsSym]: {
-        optionalProps: ['name', 'age', 'amountOfLegs']
+        optionalProps: ['name', 'age', 'weight'],
+        isOptional: true,
     }
 }
 
-const CatSpec: obj.ValidationSpec<Cat> = {
+const CatSpec: ValidationSpec<Cat> = {
     age: [
-        [IsOfType('number'), 'age must be a number']
+        [IsOfType('number'), TypeErrorFactory('number')],
     ],
     name: [
-        [IsOfType('string'),  'name must be a number']
+        [IsOfType('string'),  TypeErrorFactory('string')]
     ],
-    amountOfLegs: [
-        [IsOfType('number'),  'amountOfLegs must be a number']
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
     ],
-    child: CatChildSpec,
-    [ValidationOptionsSym]: {
+    child: CatChildSpec,        // just pass the SPECIFICATION for the 
+                                // nested object instead of an array of validators
+    [ValidationOptionsSym]: {   
         optionalProps: ['name']
     }
 }
 
-
-const CatParentSpec: obj.ValidationSpec<CatParent> = {
+const CatParentSpec: ValidationSpec<CatParent> = {
     age: [
-        [IsOfType('number'), 'age must be a number']
+        [IsOfType('number'), TypeErrorFactory('number')],
     ],
     name: [
-        [IsOfType('string'),  'name must be a number']
+        [IsOfType('string'),  TypeErrorFactory('string')]
     ],
-    amountOfLegs: [
-        [IsOfType('number'),  'amountOfLegs must be a number']
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
     ],
-    childCat: CatSpec,
+    childCat: CatSpec,          // just pass the SPECIFICATION for the 
+                                // nested object instead of an array of validators
     [ValidationOptionsSym]: {
-        optionalProps: ['name']
+        optionalProps: ['age']
     }
 }
 
 const cat: Cat = {
-    age: 1,
-    name: 1 as any, // SHOULD BE A STRING
-    amountOfLegs: 4,
-    child: {
+    // age: 1,              // missing
+    color: 'grey',          // redundant
+    name: 1,
+    weight: 4,
+    child: {                // nested child
         name: 'Tonny jr',
-        age: '1' as any, // SHOULD BE A NUMBER
+        age: '1',
     },
-}
+} as any;
+
 const catParent: CatParent = {
-    age: 1,
+    age: 'old',
     name: 'Tonny Sr',
-    amountOfLegs: '4' as any, // SHOULD BE A NUMBER
-    childCat: cat
-}
+    weight: 'overweight', 
+    childCat: cat           // nested cat
+} as any
 
 const result = Validate(CatParentSpec, catParent);
-const Result = {
-    "valid": false,
-    "errorCount": 3,
-    "missingProperties": [],
-    "redundantProperties": [],
-    "errors": {
-        "amountOfLegs": [
-            "amountOfLegs must be a number"
-        ],
-        "childCat.name": [
-            "name must be a number"
-        ],
-        "childCat.child.age": [
-            "age must be a number"
-        ]
-    }
+```
+Result will be:
+```
+{
+  "valid": false,
+  "errorCount": 6,
+  "missingProperties": [
+    "childCat.age"
+  ],
+  "redundantProperties": [
+    "childCat.color"
+  ],
+  "errors": {
+    "age": [
+      "age must be of type number but was of type string"
+    ],
+    "weight": [
+      "weight must be of type number but was of type string"
+    ],
+    "childCat.name": [
+      "name must be of type string but was of type number"
+    ],
+    "childCat.child.age": [
+      "age must be of type number but was of type string"
+    ]
+  }
 }
 ```
-</details> 
-<hr>
+**Please note** the way nested object errors are presented. 
+They are presented using `dot notation`: *"childCat.child.age"* 
 
-Result of the function is of type ValidationSummary:
+If you want to change format of the message 
+you can **try to use function to validate the nested object as usual**:
 ```ts
-export type ValidationSummary<T1 extends DataObject> = {
-    // whether object is valid
-    valid: boolean,
-    
-    // how many errors occured in the process of validation
-    // in case of a valid object it's always 0
-    errorCount: number,
-    
-    // valid object can not have missing properties
-    missingProperties: string[],
-    
-    // valid object can not have redundant properties 
-    // (unless stated otherwise in specification)
-    redundantProperties: string[],
-    
-    // messages to understand what is wrong with the object
-    errors: Record<keyof T1 | '_self', string[]>
-    // _self is used to indicate that value that you passed to 
-    // the validation function IS NOT AN OBJECT AT ALL
+
+const CatSpec: ValidationSpec<Cat> = {
+    child: [
+        [
+            (v, k, o) => v?.age > 0, 
+            (v, k, o) => `${k} age must be greater than 0 but was ${v?.age}`
+        ]
+    ]
 }
 ```
 
+# Extending specs
+As you can see in examples above there's quite a lot of repetition going on.
+
+🔨 under development...
