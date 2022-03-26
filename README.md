@@ -158,7 +158,7 @@ Result will be:
     "errors": {}
 }
 ```
-
+**When we pass invalid object:**
 ```ts
 const invalidCatChild: CatChild = {
     age: 'Tom',
@@ -166,25 +166,27 @@ const invalidCatChild: CatChild = {
     weight: { number: 3 },
     isTiger: false
 }
-const summary2 = Validate(CatChildSpec, invalidCatChild);
+const summary = Validate(CatChildSpec, invalidCatChild);
 ```
 Result will be:
 ```
 {
-  "valid": false,                                   # object is invalid
-  "errorCount": 5,                                  # 5 errors were found
+  "valid": false,                                               # object is invalid
+  "errorCount": 5,                                              # 5 errors were found
   "missingProperties": [],
-  "redundantProperties": [ "isTiger" ],             # isTiger property is redundant
-  "errors": {                                       # "errors" is an object that contains 
-    "age": [                                        # an array of errors for every property:
-      "age must be a number",
+  "redundantProperties": [
+    "isTiger"                                                   # isTiger property is redundant
+  ],
+  "errors": {                                                   # "errors" is an object that contains 
+    "age": [                                                    # an array of errors for every property:
+      "age must be of type number but was of type string",
       "age must be greater than 0 but was Tom"
     ],
     "name": [
-      "name must be a number"
+      "name must be of type string but was of type number"
     ],
     "weight": [
-      "weight must be a number"
+      "weight must be of type number but was of type object"
     ]
   }
 }
@@ -361,3 +363,5 @@ const CatSpec: ValidationSpec<Cat> = {
 As you can see in examples above there's quite a lot of repetition going on.
 
 🔨 under development...
+
+# Speed comparison
