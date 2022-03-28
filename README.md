@@ -15,14 +15,14 @@ and returns `validation summary`
 Validation specification looks like this:
 ```ts
 export type ValidationSpec<T1 extends DataObject> = {
-    [P in keyof T1]?:
+    [P in keyof T1]:
         | ValidationSpec<Required<T1>[P]>               // spec for nested obj
         | ValidationPropertyRule<T1, P>[]               // or an array of validationPropertyRules
 } & { [ValidationOptionsSym]?: ValidationOptions<T1> }; // optional options
 
 export type ValidationPropertyRule<T1, P extends keyof T1> = [ // tuple of:
-    (v: T1[P], k: keyof T1, o: T1) => boolean,                // 0.validator 
-    (v: T1[P], k: keyof T1, o: T1) => string                 // 1.message factory
+    (v: T1[P], k: P, o: T1) => boolean,                // 0.validator 
+    (v: T1[P], k: P, o: T1) => string                 // 1.message factory
 ];
 ```
 ## Options 
@@ -30,7 +30,7 @@ export type ValidationPropertyRule<T1, P extends keyof T1> = [ // tuple of:
 export type ValidationOptions<T extends DataObject> = {
     // used to increase performance in case you are only interested in 
     // validity of an object and not in all the properties that are invalid
-    stopWhen?: (summary: ValidationSummary<T>) => boolean,
+    stopAfterInvalid?: boolean,
 
     // allows you to create custom messages in case validator throws an exception
     errorHandler?: (e: ValidationException) => string,
@@ -60,7 +60,7 @@ every option. Default options look like this:
 const defaultOptions = {
     optionalProps: [],
     redundantIsError: true,
-    stopWhen: FALSE,        // never stop
+    stopAfterInvalid: false,
     errorHandler: ({key}) => `Error while validating property "${key}".`,
     isOptional: false
 }
@@ -360,8 +360,75 @@ const CatSpec: ValidationSpec<Cat> = {
 ```
 
 # Extending specs
-As you can see in examples above there's quite a lot of repetition going on.
+As you can see above there's quite *a lot of repetition when declaring specs for similar types*.
+To only write necessary specification details for different types there's **Extend** method.
 
-🔨 under development...
+Extend method takes two arguments:
+1. extension specification
+2. parent specification
+
+## Extension specification
+Similar to validation specification but:
+1. Two options are required: `omitKeys` and `optionalProps`, this is done 
+    so that you don't forget to remove properties that don't exist on the new type and 
+    rewrite optional properties in accordance to the new type.
+2. Only **keys that are NOT present on the parent type are required** .
+
+## Example
+```ts
+type City      = { area?: number, name: string }
+type LocalArea = { area:  number, city: string }
+
+const CitySpec: ValidationSpec<City> = {
+    area: [ [IsOfType('number'), TypeErrorFactory('number')] ],
+    name: [ [IsOfType('string'), TypeErrorFactory('string')] ],
+    [ValidationOptionsSym]: { optionalProps: ['area'] }
+}
+
+
+const LocalAreaSpec = Extend<City, LocalArea>({ // from city -> to -> localArea spec
+    // 1. only add properties that don't exist on the parent spec
+    city: [ [IsOfType('string'), TypeErrorFactory('string')] ],
+    // area propertyRule will be inherited from the parent
+    [ValidationOptionsSym]: {
+        // 2. omit parent spec properties using omitkeys option
+        omitKeys: ['name'],
+        
+        // 3. override optionalProperties option 
+        // (in the parent spec it says that we have optional property 'name' 
+        // which is not true for the current spec)
+        optionalProps: [],
+    }
+}, CitySpec);
+```
+In the example above you can see how to easily add and remove properties from the parent specification.
+But you can also:
+**Override parent options and property rules:**
+```ts
+const LocalAreaSpec = Extend<City, LocalArea>({
+    // city property is not present on the parent spec, 
+    // so it's required that you provide property rules for it
+    city: [ [IsOfType('string'), TypeErrorFactory('string')] ],
+    // 1. area property rule will be completely overriden
+    // 2. area property is present on the parent so overriding it is optional
+    area: [ 
+        [IsOfType('number'), TypeErrorFactory('number')],
+        [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
+    ],
+    [ValidationOptionsSym]: {
+        // these options are required when extending
+        omitKeys: ['name'],
+        optionalProps: [],
+        
+        // you can specify more options to substitute those on the parent options object
+        // these options are optional when extending
+        redundantIsError: true,
+        stopAfterInvalid: false,
+        errorHandler: ({key, ruleIndex}) => `Error while validating property "${key}" at rule index ${ruleIndex}`,
+        isOptional: false
+    }
+}, CitySpec);
+```
 
 # Speed comparison
+🔨 to be continued...

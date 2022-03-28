@@ -1,5 +1,5 @@
 // == VALIDATOR
-import {Curry, DataObject, Exists, FALSE, IsOfType, obj, Unary} from "fp-way-core";
+import {Curry, DataObject, Exists, IsOfType, obj, Unary} from "fp-way-core";
 
 namespace _ValidationSummary {
     export const incErrCount = (s: ValidationSummary<any>) => {
@@ -58,19 +58,23 @@ export type ValidationException = {
     error: Error
 }
 export type ValidationOptions<T extends DataObject> = {
-    stopWhen?: (summary: ValidationSummary<T>) => boolean,
+    stopAfterInvalid?: boolean,
     errorHandler?: (e: ValidationException) => string,
     redundantIsError?: boolean,
     optionalProps?: (keyof T)[],
     isOptional?: boolean
 }
+export type ExtentionOptions<T1 extends DataObject, T2 extends DataObject> = {
+    omitKeys: (keyof T1)[],
+    optionalProps: (keyof T2)[],
+} & ValidationOptions<T2>
 export type PopulatedValidationOptions<T1 extends DataObject> = Required<ValidationOptions<T1>>;
 export const ValidationOptionsSym: unique symbol = Symbol.for('fp-way-validation-options');
 const _defaultValidationOptions: PopulatedValidationOptions<any> = {
     optionalProps: [],
     redundantIsError: true,
-    stopWhen: FALSE,
-    errorHandler: ({key}) => `Error while validating property "${key}".`,
+    stopAfterInvalid: false,
+    errorHandler: ({key, ruleIndex}) => `Error while validating property "${key}" at rule index ${ruleIndex}`,
     isOptional: false
 }
 export type ValidationPropertyRule<T1, P extends keyof T1> = [
@@ -78,14 +82,21 @@ export type ValidationPropertyRule<T1, P extends keyof T1> = [
     (v: T1[P], k: P, o: T1) => string
 ];
 export type ValidationSpec<T1 extends DataObject> = {
-    [P in keyof T1]?:
+    [P in keyof T1]:
         | ValidationSpec<Required<T1>[P]>
         | ValidationPropertyRule<Required<T1>, P>[]
 } & { [ValidationOptionsSym]?: ValidationOptions<T1> };
+export type ExtentionSpec<T1 extends DataObject, T2 extends DataObject> =
+    & { [ValidationOptionsSym]: ExtentionOptions<T1, T2>  }
+    & Pick<
+        ValidationSpec<T2>,
+        Exclude<keyof T2, keyof T1>
+    >
+    & Partial<Pick<
+        ValidationSpec<T2>,
+        Extract<keyof T2, keyof T1>
+    >>
 
-export type ValidationSpecWithPopulatedOptions<T1 extends DataObject> =
-    & ValidationSpec<T1>
-    & { [ValidationOptionsSym]: PopulatedValidationOptions<T1> };
 export type _CheckPropsResult = {
     missing: string[],
     redundant: string[],
@@ -152,7 +163,7 @@ export const Validate: {
     }
 
     for(let i = 0; i < propsToCheck.length; i++) {
-        if(options.stopWhen(summary)) { return summary; }
+        if(options.stopAfterInvalid && !summary.valid) { return summary; }
 
         const ptc = propsToCheck[i];
         const keySpec = spec[ptc];
@@ -180,4 +191,29 @@ export const Validate: {
     }
 
     return summary;
+})
+export const Extend: {
+    <T1 extends DataObject, T2 extends DataObject>(
+        extention_spec: ExtentionSpec<T1, T2>,
+        parent_spec: ValidationSpec<T1>
+    ): ValidationSpec<T2>
+
+    <T1, T2>(
+        extention_spec: ExtentionSpec<T1, T2>,
+    ): Unary<ValidationSpec<T1>, ValidationSpec<T2>>
+} = Curry((
+    ext_spec: ExtentionSpec<any, any>,
+    parent_spec: ValidationSpec<any>
+) => {
+    const new_spec = obj.Impose(ext_spec, parent_spec);
+    const new_options = obj.Impose(
+        ext_spec[ValidationOptionsSym] || {},
+        parent_spec?.[ValidationOptionsSym] || {}
+    );
+
+    new_options?.['omitKeys']?.forEach(k => delete new_spec[k])
+    delete new_options['omitKeys']
+
+    new_spec[ValidationOptionsSym] = new_options;
+    return new_spec;
 })

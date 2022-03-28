@@ -1,8 +1,9 @@
-import {Validate, ValidationOptionsSym, ValidationSpec} from "./index";
+import {Extend, ExtentionOptions, Validate, ValidationOptionsSym, ValidationSpec} from "./index";
 import {IsOfType, JSTypesWithArrayAndNull, num, Return, TypeOf} from "fp-way-core";
 import Gt = num.Gt;
 
 type CatChild = {
+    siblings: boolean,
     age?: number;
     name?: string;
     weight?: number;
@@ -20,59 +21,64 @@ type CatParent = {
     childCat: Cat;
 }
 
+const TypeErrorFactory =
+    (t: JSTypesWithArrayAndNull) =>
+    (v, k) =>
+        `${k} must be of type ${t} but was of type ${TypeOf(v)}`
+const CatChildSpec: ValidationSpec<CatChild> = {
+    siblings: [
+        [IsOfType('boolean'), TypeErrorFactory('boolean')]
+    ],
+    age: [
+        [IsOfType('number'), TypeErrorFactory('number')],
+        [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
+    ],
+    name: [
+        [IsOfType('string'),  TypeErrorFactory('string')]
+    ],
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
+    ],
+    [ValidationOptionsSym]: {
+        optionalProps: ['name', 'age', 'weight'],
+        isOptional: true,
+    }
+}
+const CatSpec: ValidationSpec<Cat> = {
+    age: [
+        [IsOfType('number'), TypeErrorFactory('number')],
+    ],
+    name: [
+        [IsOfType('string'),  TypeErrorFactory('string')]
+    ],
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
+    ],
+    child: CatChildSpec,
+    [ValidationOptionsSym]: {
+        optionalProps: ['name']
+    }
+}
+const CatParentSpec: ValidationSpec<CatParent> = {
+    age: [
+        [IsOfType('number'), TypeErrorFactory('number')],
+    ],
+    name: [
+        [IsOfType('string'),  TypeErrorFactory('string')]
+    ],
+    weight: [
+        [IsOfType('number'),  TypeErrorFactory('number')]
+    ],
+    childCat: CatSpec,
+    [ValidationOptionsSym]: {
+        optionalProps: ['age']
+    }
+}
+
 describe('Validate', () => {
-    const TypeErrorFactory = (t: JSTypesWithArrayAndNull) => (v, k) => `${k} must be of type ${t} but was of type ${TypeOf(v)}`
-    const CatChildSpec: ValidationSpec<CatChild> = {
-        age: [
-            [IsOfType('number'), TypeErrorFactory('number')],
-            [Gt(0), (v, k) => `${k} must be greater than 0 but was ${v}`],
-        ],
-        name: [
-            [IsOfType('string'),  TypeErrorFactory('string')]
-        ],
-        weight: [
-            [IsOfType('number'),  TypeErrorFactory('number')]
-        ],
-        [ValidationOptionsSym]: {
-            optionalProps: ['name', 'age', 'weight'],
-            isOptional: true,
-        }
-    }
-
-    const CatSpec: ValidationSpec<Cat> = {
-        age: [
-            [IsOfType('number'), TypeErrorFactory('number')],
-        ],
-        name: [
-            [IsOfType('string'),  TypeErrorFactory('string')]
-        ],
-        weight: [
-            [IsOfType('number'),  TypeErrorFactory('number')]
-        ],
-        child: CatChildSpec,
-        [ValidationOptionsSym]: {
-            optionalProps: ['name']
-        }
-    }
-
-    const CatParentSpec: ValidationSpec<CatParent> = {
-        age: [
-            [IsOfType('number'), TypeErrorFactory('number')],
-        ],
-        name: [
-            [IsOfType('string'),  TypeErrorFactory('string')]
-        ],
-        weight: [
-            [IsOfType('number'),  TypeErrorFactory('number')]
-        ],
-        childCat: CatSpec,
-        [ValidationOptionsSym]: {
-            optionalProps: ['age']
-        }
-    }
-
     it('should return valid summary if an object is valid', () => {
         const catChild: CatChild = {
+            siblings: true,
             age: 1,
             name: 'Tonny',
             weight: 4,
@@ -118,7 +124,7 @@ describe('Validate', () => {
             age: 1,
             // name: 'Tonny',  <-- optional
             weight: 4,
-            child: {},
+            child: {siblings: false},
         }
 
         const result = Validate(CatSpec, cat);
@@ -130,7 +136,7 @@ describe('Validate', () => {
             age: 1,
             name: 1 as any, // should be string
             weight: 4,
-            child: {},
+            child: {siblings: false},
         }
 
         const result = Validate(CatSpec, cat);
@@ -143,7 +149,7 @@ describe('Validate', () => {
             age: 1,
             name: 'Tonny',
             weight: 4,
-            child: {},
+            child: {siblings: true},
             // @ts-expect-error
             redProp: 'what', // redundant
         }
@@ -173,7 +179,7 @@ describe('Validate', () => {
 
         const result = Validate(CatParentSpec, catParent);
 
-        expect(result.errorCount).toBe(6);
+        expect(result.errorCount).toBeGreaterThan(2);
         expect(result.valid).toBe(false);
     })
     it('should validate an object in less than 3ms', () => {
@@ -182,6 +188,7 @@ describe('Validate', () => {
             name: 1 as any, // SHOULD BE A STRING
             weight: 4,
             child: {
+                siblings: false,
                 name: 'Tonny jr',
                 age: '1' as any, // SHOULD BE A NUMBER
             },
@@ -205,5 +212,47 @@ describe('Validate', () => {
         console.log(`Validation time: ${ms} milliseconds`);
 
         expect(ms).toBeLessThan(3);
+    })
+});
+describe('Extend', () => {
+    it('should extend a summary to create a new one', () => {
+        const cat_child_spec = Extend<Cat, CatChild>({
+            siblings: [ [IsOfType('boolean'), TypeErrorFactory('boolean')] ],
+            [ValidationOptionsSym]: {
+                optionalProps: ['name', 'age', 'weight'],
+                isOptional: true,
+                omitKeys: ['child']
+            }
+        }, CatSpec);
+
+        expect(cat_child_spec.siblings).toBeDefined();
+        expect(cat_child_spec[ValidationOptionsSym]?.optionalProps).toEqual(['name', 'age', 'weight']);
+        expect(cat_child_spec[ValidationOptionsSym]?.isOptional).toBe(true);
+        expect((cat_child_spec[ValidationOptionsSym]as ExtentionOptions<any, any>)?.omitKeys).toBeUndefined();
+        expect((cat_child_spec as any).child).toBeUndefined();
+
+        expect(CatSpec.child).toBeDefined();
+        expect(CatSpec[ValidationOptionsSym]?.optionalProps).not.toEqual(['name', 'age', 'weight']);
+        expect((CatSpec as any as ValidationSpec<CatChild>).siblings).toBeUndefined();
+    })
+    it('should make intersecting properties optional while additional properties required', () => {
+        type City = { name: string, area?: number }
+        type LocalArea = { area: number, city: string }
+        const CitySpec: ValidationSpec<City> = {
+            area: [ [IsOfType('number'), TypeErrorFactory('number')] ],
+            name: [ [IsOfType('string'), TypeErrorFactory('string')] ],
+            [ValidationOptionsSym]: { optionalProps: ['area'] }
+        }
+        const LocalAreaSpec = Extend<City, LocalArea>({
+            city: [ [IsOfType('string'), TypeErrorFactory('string')] ],
+            [ValidationOptionsSym]: {
+                omitKeys: ['name'],
+                optionalProps: [],
+            }
+        }, CitySpec);
+
+        expect(LocalAreaSpec.city).toBeDefined();
+        expect(LocalAreaSpec.area).toBeDefined();
+        expect(LocalAreaSpec?.[ValidationOptionsSym]?.optionalProps).toEqual([]);
     })
 })
